@@ -9,6 +9,8 @@ import {
   Upload,
   Collapse,
   Table,
+  Modal,
+  Popconfirm,
 } from "antd";
 import { useEffect, useState } from "react";
 import { UploadOutlined } from "@ant-design/icons";
@@ -20,6 +22,9 @@ export default function Courses() {
   const [coursesByCategory, setCoursesByCategory] = useState({});
   const [videoFile, setVideoFile] = useState(null);
   const [form] = Form.useForm();
+  const [isEdit, setIsEdit] = useState(false);
+  const [editingCourse, setEditingCourse] = useState(null);
+  const [modalOpen, setModalOpen] = useState(false);
 
   const token = localStorage.getItem("admin_token");
 
@@ -83,7 +88,7 @@ export default function Courses() {
     }
   }, [categories]);
 
-  const handleAddCourse = async (values) => {
+  const handleAddOrUpdateCourse = async (values) => {
     if (!token) {
       message.error("Unauthorized: Please login again.");
       return;
@@ -97,33 +102,76 @@ export default function Courses() {
       if (values.video_url) formData.append("video_url", values.video_url);
       if (videoFile) formData.append("video_file", videoFile);
 
-      const res = await fetch(
-        "https://fastapi-course-app.onrender.com/courses/create_course",
-        {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-          body: formData,
-        }
-      );
+      const url = isEdit
+        ? `https://fastapi-course-app.onrender.com/courses/update_course/${editingCourse.id}`
+        : "https://fastapi-course-app.onrender.com/courses/create_course";
+
+      const method = isEdit ? "PUT" : "POST";
+
+      const res = await fetch(url, {
+        method,
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
 
       if (res.ok) {
-        message.success("Course added successfully.");
+        message.success(isEdit ? "Course updated." : "Course added.");
         form.resetFields();
         setVideoFile(null);
         fetchCoursesForCategories(categories);
+        setModalOpen(false);
+        setIsEdit(false);
       } else {
         const error = await res.json();
-        message.error(error.detail || "Failed to add course.");
+        message.error(error.detail || "Operation failed.");
       }
     } catch (err) {
       console.error(err);
-      message.error("Server error while adding course.");
+      message.error("Server error.");
     }
   };
 
-  const handleFileUpload = (file) => {
-    setVideoFile(file);
-    return false;
+  const handleEditCourse = (record) => {
+    setIsEdit(true);
+    setEditingCourse(record);
+    setVideoFile(null);
+    setModalOpen(true);
+    form.setFieldsValue({
+      title: record.title,
+      description: record.description,
+      category_id: record.category_id,
+      video_url: record.video_url,
+    });
+  };
+
+  useEffect(() => {
+    if (modalOpen && !isEdit) {
+      form.resetFields();
+      setVideoFile(null);
+    }
+  }, [modalOpen, isEdit]);
+
+  const handleDeleteCourse = async (id) => {
+    if (!token) return;
+    try {
+      const res = await fetch(
+        `https://fastapi-course-app.onrender.com/courses/delete_course/${id}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (res.ok) {
+        message.success("Course deleted.");
+        fetchCoursesForCategories(categories);
+      } else {
+        const error = await res.json();
+        message.error(error.detail || "Delete failed.");
+      }
+    } catch (err) {
+      console.error(err);
+      message.error("Server error.");
+    }
   };
 
   const isYouTube = (url) =>
@@ -166,99 +214,44 @@ export default function Courses() {
           "—"
         ),
     },
+    {
+      title: "Actions",
+      render: (_, record) => (
+        <>
+          <Button type="link" onClick={() => handleEditCourse(record)}>
+            Edit
+          </Button>
+          <Popconfirm
+            title="Confirm delete?"
+            onConfirm={() => handleDeleteCourse(record.id)}
+            okText="Yes"
+            cancelText="No"
+          >
+            <Button danger type="link">
+              Delete
+            </Button>
+          </Popconfirm>
+        </>
+      ),
+    },
   ];
 
   return (
     <Card
       style={{ borderRadius: "12px", boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}
     >
-      <Title level={4}>Add New Course</Title>
+      <Button
+        type="primary"
+        style={{ marginBottom: 20 }}
+        onClick={() => {
+          setIsEdit(false);
+          setModalOpen(true);
+        }}
+      >
+        Add Course
+      </Button>
 
-      <Form layout="vertical" onFinish={handleAddCourse} form={form}>
-        <Form.Item
-          name="title"
-          label="Title"
-          rules={[{ required: true, message: "Please enter course title" }]}
-        >
-          <Input placeholder="Course title" />
-        </Form.Item>
-
-        <Form.Item
-          name="description"
-          label="Description"
-          rules={[{ required: true, message: "Please enter description" }]}
-        >
-          <Input placeholder="Course description" />
-        </Form.Item>
-
-        <Form.Item
-          name="category_id"
-          label="Category"
-          rules={[{ required: true, message: "Please select category" }]}
-        >
-          <Select placeholder="Select category">
-            {categories.map((c) => (
-              <Select.Option key={c.id} value={c.id}>
-                {c.name}
-              </Select.Option>
-            ))}
-          </Select>
-        </Form.Item>
-
-        {/* Video URL input — disable if file is selected */}
-        <Form.Item shouldUpdate>
-          {() => (
-            <Form.Item name="video_url" label="Video URL (optional)">
-              <Input
-                placeholder="YouTube or server video path"
-                disabled={!!videoFile}
-                onChange={(e) => {
-                  if (e.target.value) {
-                    setVideoFile(null);
-                  }
-                }}
-              />
-            </Form.Item>
-          )}
-        </Form.Item>
-
-        {/* Video File Upload — disable if video_url is filled */}
-        <Form.Item shouldUpdate>
-          {() => (
-            <Form.Item label="Upload Video File (optional)">
-              <Upload
-                beforeUpload={(file) => {
-                  setVideoFile(file);
-                  if (form.getFieldValue("video_url")) {
-                    form.setFieldsValue({ video_url: "" });
-                  }
-                  return false;
-                }}
-                maxCount={1}
-                accept="video/*"
-                fileList={videoFile ? [videoFile] : []}
-                onRemove={() => setVideoFile(null)}
-                disabled={!!form.getFieldValue("video_url")}
-              >
-                <Button
-                  icon={<UploadOutlined />}
-                  disabled={!!form.getFieldValue("video_url")}
-                >
-                  Select Video
-                </Button>
-              </Upload>
-            </Form.Item>
-          )}
-        </Form.Item>
-
-        <Button type="primary" htmlType="submit" block>
-          Add Course
-        </Button>
-      </Form>
-
-      <Title level={4} style={{ marginTop: 32 }}>
-        Existing Courses by Category
-      </Title>
+      <Title level={4}>Courses by Category</Title>
 
       <Collapse
         accordion
@@ -283,6 +276,80 @@ export default function Courses() {
         }))}
         style={{ marginTop: 24 }}
       />
+
+      <Modal
+        open={modalOpen}
+        title={isEdit ? "Edit Course" : "Add Course"}
+        onCancel={() => setModalOpen(false)}
+        footer={null}
+        destroyOnHidden
+      >
+        <Form layout="vertical" form={form} onFinish={handleAddOrUpdateCourse}>
+          <Form.Item
+            name="title"
+            label="Title"
+            rules={[{ required: true, message: "Enter course title" }]}
+          >
+            <Input placeholder="Course title" />
+          </Form.Item>
+
+          <Form.Item
+            name="description"
+            label="Description"
+            rules={[{ required: true, message: "Enter description" }]}
+          >
+            <Input placeholder="Description" />
+          </Form.Item>
+
+          <Form.Item
+            name="category_id"
+            label="Category"
+            rules={[{ required: true, message: "Select category" }]}
+          >
+            <Select
+              placeholder="Select category"
+              options={categories.map((c) => ({ label: c.name, value: c.id }))}
+            />
+          </Form.Item>
+
+          <Form.Item name="video_url" label="Video URL (optional)">
+            <Input
+              placeholder="YouTube or server video path"
+              disabled={!!videoFile}
+              onChange={(e) => {
+                if (e.target.value) setVideoFile(null);
+              }}
+            />
+          </Form.Item>
+
+          <Form.Item shouldUpdate>
+            {() => (
+              <Form.Item label="Upload Video File (optional)">
+                <Upload
+                  beforeUpload={(file) => {
+                    setVideoFile(file);
+                    if (form.getFieldValue("video_url")) {
+                      form.setFieldsValue({ video_url: "" });
+                    }
+                    return false;
+                  }}
+                  maxCount={1}
+                  accept="video/*"
+                  fileList={videoFile ? [videoFile] : []}
+                  onRemove={() => setVideoFile(null)}
+                  disabled={!!form.getFieldValue("video_url")}
+                >
+                  <Button icon={<UploadOutlined />}>Select Video</Button>
+                </Upload>
+              </Form.Item>
+            )}
+          </Form.Item>
+
+          <Button type="primary" htmlType="submit" block>
+            {isEdit ? "Update Course" : "Add Course"}
+          </Button>
+        </Form>
+      </Modal>
     </Card>
   );
 }
